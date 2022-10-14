@@ -1,4 +1,4 @@
-use mpl_token_metadata::{instruction::*, pda::find_metadata_account, state::*};
+use mpl_token_metadata::{instruction, pda::find_metadata_account, state::*};
 use pyo3::prelude::*;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -6,40 +6,50 @@ use solana_sdk::{
     signer::Signer, transaction::Transaction,
 };
 use spl_token::state::Mint;
-
-// fn get_keypair_from_path(path: &str) -> Keypair {
-//     let string_keypair = fs::read_to_string(path).unwrap();
-//     let raw_keypair: &[u8] = serde_json::from_str(&string_keypair).unwrap();
-
-//     let keypair: Keypair = Keypair::from_bytes(string_keypair.as_bytes()).unwrap();
-
-//     return keypair;
-// }
+use mpl_token_metadata::pda::find_master_edition_account;
+use spl_associated_token_account::get_associated_token_address;
 
 #[pyfunction]
-fn send_transaction() {
+fn send_transaction(_uri : String, to_addr : &[u8]) {
     let client = RpcClient::new("https://api.devnet.solana.com");
 
     let secret_key: [u8; 64] = [
-        // add secret_key
+        26, 110, 108, 237, 157, 77, 56, 250, 82, 157, 243, 112, 123, 113, 249, 246, 96, 123, 169,
+        28, 58, 41, 142, 205, 31, 28, 95, 1, 146, 95, 101, 82, 124, 168, 12, 182, 64, 235, 134,
+        255, 216, 169, 149, 158, 128, 248, 2, 4, 23, 122, 107, 209, 217, 109, 165, 146, 142, 242,
+        177, 246, 47, 42, 186, 68,
     ];
 
-    let wallet = Keypair::from_bytes(&secret_key).unwrap();
-    let mint_account = Keypair::new();
-    let mint_authority_account = &wallet;
-    let metadata_account = find_metadata_account(&mint_account.pubkey()).0;
 
-    let name = "testest";
+    let payer = Keypair::from_bytes(&secret_key).unwrap();
+    let mint_account = Keypair::new();
+    let mint_authority_account = &payer;
+    let metadata_account = find_metadata_account(&mint_account.pubkey()).0;
+    let master_edition_account = find_master_edition_account(&mint_account.pubkey()).0;
+
+
+    let name = "asdfwer";
     let symbol = "TTT";
-    let uri = "www.naver.com";
-    let seller_fee_basis_point = 100;
+    let uri = _uri;
+    let seller_fee_basis_point: u16 = 100;
     let creators = vec![Creator {
-        address: wallet.pubkey(),
-        verified: false,
+        address: payer.pubkey(),
+        verified: true,
         share: 100,
     }];
 
-    let decimals = 0;
+    // 6sDueq754X8Pm1bb5ubSYHW7xEPKPxD9BxoZksENqAke
+    let master_nft_pubkey: [u8; 32] = [
+        87, 40, 17, 234, 23, 122, 159, 21, 168, 182, 201, 193, 251, 14, 11, 118, 175, 147, 205,
+        142, 117, 99, 118, 174, 230, 165, 191, 134, 253, 98, 7, 23,
+    ];
+
+    let collections = Collection{
+        verified: false,
+        key : Pubkey::from(master_nft_pubkey)
+    };
+
+    let decimals: u8 = 0;
 
     let space = Mint::LEN;
 
@@ -47,13 +57,11 @@ fn send_transaction() {
         .get_minimum_balance_for_rent_exemption(space)
         .unwrap();
 
-    let assoc = spl_associated_token_account::get_associated_token_address(
-        &wallet.pubkey(),
-        &mint_account.pubkey(),
-    );
+    let wallet = Pubkey::new(to_addr);
+    let assoc = get_associated_token_address(&wallet, &mint_account.pubkey());
 
     let create_account_instruction: Instruction = solana_sdk::system_instruction::create_account(
-        &wallet.pubkey(),
+        &payer.pubkey(),
         &mint_account.pubkey(),
         minimum_balance_for_rent_exemption,
         space as u64,
@@ -63,35 +71,36 @@ fn send_transaction() {
     let initialize_mint_instruction: Instruction = spl_token::instruction::initialize_mint(
         &spl_token::ID,
         &mint_account.pubkey(),
-        &wallet.pubkey(),
+        &payer.pubkey(),
         None,
         decimals,
     )
     .unwrap();
 
-    let create_assoc_instruction = spl_associated_token_account::create_associated_token_account(
-        &wallet.pubkey(),
-        &wallet.pubkey(),
+    let create_assoc_instruction = spl_associated_token_account::instruction::create_associated_token_account(
+        &payer.pubkey(),
+        &wallet,
         &mint_account.pubkey(),
+        &spl_token::ID,
     );
 
     let mint_token_to = spl_token::instruction::mint_to(
         &spl_token::ID,
         &mint_account.pubkey(),
         &assoc,
-        &wallet.pubkey(),
-        &[&wallet.pubkey()],
+        &payer.pubkey(),
+        &[&payer.pubkey()],
         1,
     )
     .unwrap();
 
-    let create_metadata_account = mpl_token_metadata::instruction::create_metadata_accounts_v2(
+    let create_metadata_account = instruction::create_metadata_accounts_v2(
         mpl_token_metadata::ID,
-        metadata_account,
+         metadata_account,
         mint_account.pubkey(),
         mint_authority_account.pubkey(),
-        wallet.pubkey(),
-        wallet.pubkey(),
+        payer.pubkey(),
+        payer.pubkey(),
         name.to_string(),
         symbol.to_string(),
         uri.to_string(),
@@ -103,6 +112,29 @@ fn send_transaction() {
         None,
     );
 
+    let create_master_edition = instruction::create_master_edition_v3(
+        mpl_token_metadata::ID,
+        master_edition_account,
+        mint_account.pubkey(),
+        payer.pubkey(),
+        mint_authority_account.pubkey(),
+        metadata_account,
+        payer.pubkey(),
+        Some(1),
+    );
+
+    let set_collection = instruction::set_and_verify_sized_collection_item(
+        mpl_token_metadata::ID,
+        metadata_account,
+        payer.pubkey(),
+        payer.pubkey(),
+        payer.pubkey(),
+        collections.key,
+        find_metadata_account(&collections.key).0,
+        find_master_edition_account(&collections.key).0,
+        None,
+    );
+
     let recent_blockhash = client.get_latest_blockhash().unwrap();
     let transaction: Transaction = Transaction::new_signed_with_payer(
         &[
@@ -111,9 +143,11 @@ fn send_transaction() {
             create_assoc_instruction,
             mint_token_to,
             create_metadata_account,
+            create_master_edition,
+            set_collection
         ],
-        Some(&wallet.pubkey()),
-        &[&wallet, &mint_account],
+        Some(&payer.pubkey()),
+        &[&payer, &mint_account],
         recent_blockhash,
     );
     let result = client
