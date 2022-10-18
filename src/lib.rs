@@ -10,16 +10,82 @@ use mpl_token_metadata::pda::find_master_edition_account;
 use spl_associated_token_account::get_associated_token_address;
 
 #[pyfunction]
-fn send_transaction(_uri : String, to_addr : &[u8]) {
-    let client = RpcClient::new("https://api.devnet.solana.com");
+fn transfer_token(rpc_url: &str, secret_key : [u8; 64], to_addr : &[u8], mint_account : &[u8]) -> PyResult<String>{
+    let client = RpcClient::new(rpc_url);
 
-    let secret_key: [u8; 64] = [
-        26, 110, 108, 237, 157, 77, 56, 250, 82, 157, 243, 112, 123, 113, 249, 246, 96, 123, 169,
-        28, 58, 41, 142, 205, 31, 28, 95, 1, 146, 95, 101, 82, 124, 168, 12, 182, 64, 235, 134,
-        255, 216, 169, 149, 158, 128, 248, 2, 4, 23, 122, 107, 209, 217, 109, 165, 146, 142, 242,
-        177, 246, 47, 42, 186, 68,
-    ];
+    let payer = Keypair::from_bytes(&secret_key).unwrap();
 
+    let mint = Pubkey::new(mint_account);
+    let wallet = Pubkey::new(to_addr);
+    let assoc = get_associated_token_address(&wallet, &mint);
+
+    let transfer_token = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &payer.pubkey(),
+        &assoc,
+        &payer.pubkey(),
+        &[&payer.pubkey()],
+        1
+    ).unwrap();
+
+    let recent_blockhash = client.get_latest_blockhash().unwrap();
+    let transaction: Transaction = Transaction::new_signed_with_payer(
+        &[
+            transfer_token
+        ],
+        Some(&payer.pubkey()),
+        &[&payer],
+        recent_blockhash,
+    );
+    let result = client
+        .send_transaction(&transaction)
+        .unwrap();
+
+    Ok(result.to_string())
+}
+
+#[pyfunction]
+fn thaw_account(rpc_url: &str, secret_key : [u8; 64], to_addr : &[u8], mint_account : &[u8]) -> PyResult<String>{
+    let client = RpcClient::new(rpc_url);
+
+    let payer = Keypair::from_bytes(&secret_key).unwrap();
+
+    let mint = Pubkey::new(mint_account);
+    let wallet = Pubkey::new(to_addr);
+    let assoc = get_associated_token_address(&wallet, &mint);
+
+    let thaw_account = spl_token::instruction::thaw_account(
+        &spl_token::ID,
+        &assoc,
+        &mint,
+        &payer.pubkey(),
+        &[&payer.pubkey()],
+    )
+    .unwrap();
+
+    let recent_blockhash = client.get_latest_blockhash().unwrap();
+    let transaction: Transaction = Transaction::new_signed_with_payer(
+        &[
+            thaw_account
+        ],
+        Some(&payer.pubkey()),
+        &[&payer],
+        recent_blockhash,
+    );
+    let result = client
+        .send_transaction(&transaction)
+        .unwrap();
+
+    println!("NFT Tokens minted successfully.");
+
+    Ok(result.to_string())
+}
+
+
+#[pyfunction]
+fn mint_and_freeze(rpc_url : &str, secret_key : [u8; 64], to_addr : &[u8], _uri : String) -> PyResult<String> {
+    let client = RpcClient::new(rpc_url);
+    // let client = RpcClient::new("https://api.devnet.solana.com");
 
     let payer = Keypair::from_bytes(&secret_key).unwrap();
     let mint_account = Keypair::new();
@@ -27,8 +93,7 @@ fn send_transaction(_uri : String, to_addr : &[u8]) {
     let metadata_account = find_metadata_account(&mint_account.pubkey()).0;
     let master_edition_account = find_master_edition_account(&mint_account.pubkey()).0;
 
-
-    let name = "asdfwer";
+    let name = "TESTOKEN";
     let symbol = "TTT";
     let uri = _uri;
     let seller_fee_basis_point: u16 = 100;
@@ -38,10 +103,10 @@ fn send_transaction(_uri : String, to_addr : &[u8]) {
         share: 100,
     }];
 
-    // 6sDueq754X8Pm1bb5ubSYHW7xEPKPxD9BxoZksENqAke
+    // 7Ew4GGk5pVbnwXbxT3UyeZb8BMSsg8oS4CpTcTy8Mv4f
     let master_nft_pubkey: [u8; 32] = [
-        87, 40, 17, 234, 23, 122, 159, 21, 168, 182, 201, 193, 251, 14, 11, 118, 175, 147, 205,
-        142, 117, 99, 118, 174, 230, 165, 191, 134, 253, 98, 7, 23,
+        92, 183, 203, 47, 42, 53, 64, 169, 31, 216, 5, 67, 47, 7, 64, 92, 21, 9, 81, 100, 241, 96,
+        37, 131, 60, 113, 78, 26, 251, 158, 192, 216,
     ];
 
     let collections = Collection{
@@ -72,7 +137,7 @@ fn send_transaction(_uri : String, to_addr : &[u8]) {
         &spl_token::ID,
         &mint_account.pubkey(),
         &payer.pubkey(),
-        None,
+        Some(&payer.pubkey()),
         decimals,
     )
     .unwrap();
@@ -135,6 +200,24 @@ fn send_transaction(_uri : String, to_addr : &[u8]) {
         None,
     );
 
+    let freeze_account = spl_token::instruction::freeze_account(
+        &spl_token::ID,
+        &assoc,
+        &mint_account.pubkey(),
+        &payer.pubkey(),
+        &[&payer.pubkey()],
+    )
+    .unwrap();
+
+    // let thaw_account = spl_token::instruction::thaw_account(
+    //     &spl_token::ID,
+    //     &assoc,
+    //     &mint_account.pubkey(),
+    //     &wallet.pubkey(),
+    //     &[&wallet.pubkey()],
+    // )
+    // .unwrap();
+
     let recent_blockhash = client.get_latest_blockhash().unwrap();
     let transaction: Transaction = Transaction::new_signed_with_payer(
         &[
@@ -143,37 +226,29 @@ fn send_transaction(_uri : String, to_addr : &[u8]) {
             create_assoc_instruction,
             mint_token_to,
             create_metadata_account,
+            freeze_account,
             create_master_edition,
-            set_collection
+            set_collection,
         ],
         Some(&payer.pubkey()),
         &[&payer, &mint_account],
         recent_blockhash,
     );
     let result = client
-        .send_and_confirm_transaction_with_spinner(&transaction)
+        .send_transaction(&transaction)
         .unwrap();
 
-    println!("Signature : {}", result.to_string());
+    // println!("Signature : {}", result.to_string());
     println!("NFT Tokens minted successfully.");
-}
 
-// #[pyfunction]
-// fn send_transaction(transaction: Transaction) -> PyResult<()> {
-//     let client = RpcClient::new("https://api.devnet.solana.com");
-//
-//     let result = client
-//         .send_and_confirm_transaction_with_spinner(&transaction)
-//         .unwrap();
-//
-//     println!("Signature : {}", result.to_string());
-//     println!("NFT Tokens minted successfully.");
-//     Ok(())
-// }
+    Ok(result.to_string())
+}
 
 #[pymodule]
 fn rust(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(send_transaction, m)?)?;
+    m.add_function(wrap_pyfunction!(transfer_token, m)?)?;
+    m.add_function(wrap_pyfunction!(thaw_account, m)?)?;
+    m.add_function(wrap_pyfunction!(mint_and_freeze, m)?)?;
 //     m.add_function(wrap_pyfunction!(send_transaction, m)?)?;
 
     Ok(())
